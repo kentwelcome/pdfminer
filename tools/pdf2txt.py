@@ -1,63 +1,115 @@
 #!/usr/bin/env python2
 import sys
 from pdfminer.pdfparser import PDFDocument, PDFParser
-from pdfminer.pdfinterp import PDFResourceManager, PDFPageInterpreter, process_pdf
+from pdfminer.pdfinterp import PDFResourceManager, PDFPageInterpreter
+from pdfminer.pdfinterp import process_pdf
 from pdfminer.pdfdevice import PDFDevice, TagExtractor
 from pdfminer.converter import XMLConverter, HTMLConverter, TextConverter
 from pdfminer.cmapdb import CMapDB
 from pdfminer.layout import LAParams
 from pdfminer.image import ImageWriter
 
+
 # main
 def main(argv):
     import getopt
+
     def usage():
-        print ('usage: %s [-d] [-p pagenos] [-m maxpages] [-P password] [-o output] [-C] '
-               '[-n] [-A] [-V] [-M char_margin] [-L line_margin] [-W word_margin] [-F boxes_flow] '
-               '[-Y layout_mode] [-O output_dir] [-t text|html|xml|tag] [-c codec] [-s scale] file ...' % argv[0])
+        print ('usage: %s [-d] [-p pagenos] [-m maxpages] '
+               '[-P password] [-o output] [-C] '
+               '[-n] [-A] [-V] [-M char_margin] [-L line_margin] '
+               '[-W word_margin] [-F boxes_flow] '
+               '[-Y layout_mode] [-O output_dir] [-t text|html|xml|tag] '
+               '[-c codec] [-s scale] file ...' % argv[0])
         return 100
-    try:
-        (opts, args) = getopt.getopt(argv[1:], 'dp:m:P:o:CnAVM:L:W:F:Y:O:t:c:s:')
-    except getopt.GetoptError:
+
+    def checkOption(argv):
+        try:
+            optFormat = 'dp:m:P:o:CnAVM:L:W:F:Y:O:t:c:s:'
+            (opts, args) = getopt.getopt(argv[1:], optFormat)
+        except getopt.GetoptError:
+            return (None, None, True)
+        if not args:
+            return (None, None, True)
+
+        return (opts, args, False)
+
+    def initOptionVal():
+        optVal = {}
+        # debug option
+        optVal['debug'] = 0
+        # input option
+        optVal['password'] = ''
+        optVal['pagenos'] = set()
+        optVal['maxpages'] = 0
+        # output option
+        optVal['outfile'] = None
+        optVal['outtype'] = None
+        optVal['imagewriter'] = None
+        optVal['layoutmode'] = 'normal'
+        optVal['codec'] = 'utf-8'
+        optVal['scale'] = 1
+        optVal['caching'] = True
+        optVal['laparams'] = LAParams()
+        return optVal
+
+    def readOption(opts, optVal):
+        for (key, value) in opts:
+            if key == '-d':
+                optVal['debug'] += 1
+            elif key == '-p':
+                optVal['pagenos'].update(int(x)-1 for x in value.split(','))
+            elif key == '-m':
+                optVal['maxpages'] = int(value)
+            elif key == '-P':
+                optVal['password'] = value
+            elif key == '-o':
+                optVal['outfile'] = value
+            elif key == '-C':
+                optVal['caching'] = False
+            elif key == '-n':
+                optVal['laparams'] = None
+            elif key == '-A':
+                optVal['laparams'].all_texts = True
+            elif key == '-V':
+                optVal['laparams'].detect_vertical = True
+            elif key == '-M':
+                optVal['laparams'].char_margin = float(value)
+            elif key == '-L':
+                optVal['laparams'].line_margin = float(value)
+            elif key == '-W':
+                optVal['laparams'].word_margin = float(value)
+            elif key == '-F':
+                optVal['laparams'].boxes_flow = float(value)
+            elif key == '-Y':
+                optVal['layoutmode'] = value
+            elif key == '-O':
+                optVal['imagewriter'] = ImageWriter(value)
+            elif key == '-t':
+                optVal['outtype'] = value
+            elif key == '-c':
+                optVal['codec'] = value
+            elif key == '-s':
+                optVal['scale'] = float(value)
+        return optVal
+
+    def getValFromOptionVal(optVal):
+        vals = []
+        for key, val in optVal.iteritems():
+            vals.append(val)
+        return vals
+
+    (opts, args, showUsage) = checkOption(argv)
+    if showUsage:
         return usage()
-    if not args: return usage()
-    # debug option
-    debug = 0
-    # input option
-    password = ''
-    pagenos = set()
-    maxpages = 0
-    # output option
-    outfile = None
-    outtype = None
-    imagewriter = None
-    layoutmode = 'normal'
-    codec = 'utf-8'
-    pageno = 1
-    scale = 1
-    caching = True
-    showpageno = True
-    laparams = LAParams()
-    for (k, v) in opts:
-        if k == '-d': debug += 1
-        elif k == '-p': pagenos.update( int(x)-1 for x in v.split(',') )
-        elif k == '-m': maxpages = int(v)
-        elif k == '-P': password = v
-        elif k == '-o': outfile = v
-        elif k == '-C': caching = False
-        elif k == '-n': laparams = None
-        elif k == '-A': laparams.all_texts = True
-        elif k == '-V': laparams.detect_vertical = True
-        elif k == '-M': laparams.char_margin = float(v)
-        elif k == '-L': laparams.line_margin = float(v)
-        elif k == '-W': laparams.word_margin = float(v)
-        elif k == '-F': laparams.boxes_flow = float(v)
-        elif k == '-Y': layoutmode = v
-        elif k == '-O': imagewriter = ImageWriter(v)
-        elif k == '-t': outtype = v
-        elif k == '-c': codec = v
-        elif k == '-s': scale = float(v)
-    #
+
+    # Read optiaon
+    optionVal = initOptionVal()
+    optionVal = readOption(opts, optionVal)
+    (scale, layoutmode, laparams, outfile, outtype,
+     pagenos, caching, codec, debug, password, imagewriter,
+     maxpages, ) = getValFromOptionVal(optionVal)
+
     PDFDocument.debug = debug
     PDFParser.debug = debug
     CMapDB.debug = debug
@@ -95,11 +147,13 @@ def main(argv):
         return usage()
     for fname in args:
         fp = file(fname, 'rb')
-        process_pdf(rsrcmgr, device, fp, pagenos, maxpages=maxpages, password=password,
+        process_pdf(rsrcmgr, device, fp, pagenos,
+                    maxpages=maxpages, password=password,
                     caching=caching, check_extractable=True)
         fp.close()
     device.close()
     outfp.close()
     return
 
-if __name__ == '__main__': sys.exit(main(sys.argv))
+if __name__ == '__main__':
+    sys.exit(main(sys.argv))
